@@ -10,7 +10,7 @@ struct StatEntry {
 
 class StatsClient {
 public:
-    explicit StatsClient(const std::string& fifo_path);
+    StatsClient(std::string request_fifo_path, std::string response_fifo_path);
     ~StatsClient();
 
     StatsClient(const StatsClient&) = delete;
@@ -18,5 +18,6 @@ public:
 
     std::vector<StatEntry> fetch_stats();
 private:
-    std::string fifo_path_;
+    std::string request_fifo_path_;
+    std::string response_fifo_path_;
 };

@@ -18,6 +18,9 @@
 namespace {
 volatile sig_atomic_t g_running = 1;
 
+constexpr const char* kRequestFifoPath = "/tmp/echo_server_req_fifo";
+constexpr const char* kResponseFifoPath = "/tmp/echo_server_resp_fifo";
+
 void handle_signal(int signal) {
     if (signal == SIGINT || signal == SIGTERM) {
         g_running = 0;
@@ -105,12 +108,23 @@ void EchoServer::start() {
     std::cout << "Server started on port " << port_ << "..." << std::endl;
     std::cout << "Press Ctrl+C to stop." << std::endl;
 
-    const char* fifo_path = "/tmp/echo_server_fifo";
-    mkfifo(fifo_path, 0666);
+    if (mkfifo(kRequestFifoPath, 0666) < 0 && errno != EEXIST) {
+        throw std::runtime_error("Failed to create request FIFO: " + std::string(std::strerror(errno)));
+    }
 
-    int fifo_fd = open(fifo_path, O_RDWR | O_NONBLOCK);
-    if (fifo_fd < 0) {
-        throw std::runtime_error("Failed to open FIFO: " + std::string(std::strerror(errno)));
+    if (mkfifo(kResponseFifoPath, 0666) < 0 && errno != EEXIST) {
+        throw std::runtime_error("Failed to create response FIFO: " + std::string(std::strerror(errno)));
+    }
+
+    int request_fifo_fd = open(kRequestFifoPath, O_RDONLY | O_NONBLOCK);
+    if (request_fifo_fd < 0) {
+        throw std::runtime_error("Failed to open request FIFO: " + std::string(std::strerror(errno)));
+    }
+
+    int request_fifo_keepalive_fd = open(kRequestFifoPath, O_WRONLY | O_NONBLOCK);
+    if (request_fifo_keepalive_fd < 0) {
+        close(request_fifo_fd);
+        throw std::runtime_error("Failed to open request FIFO keepalive: " + std::string(std::strerror(errno)));
     }
 
     std::vector<pid_t> child_pids;
@@ -123,9 +137,9 @@ void EchoServer::start() {
         int listener_fd = server_socket_.get_fd();
         FD_SET(listener_fd, &read_fds);
 
-        FD_SET(fifo_fd, &read_fds);
+        FD_SET(request_fifo_fd, &read_fds);
 
-        int max_fd = std::max(listener_fd, fifo_fd);
+        int max_fd = std::max(listener_fd, request_fifo_fd);
 
 
         timeval timeout{1, 0};
@@ -143,8 +157,8 @@ void EchoServer::start() {
             continue;
 
         
-         if (FD_ISSET(fifo_fd, &read_fds))
-            process_fifo_request(fifo_fd);
+            if (FD_ISSET(request_fifo_fd, &read_fds))
+                process_fifo_request(request_fifo_fd);
 
         if (FD_ISSET(listener_fd, &read_fds)) {
             sockaddr_in client_address{};
@@ -169,6 +183,10 @@ void EchoServer::start() {
 
             if (pid == 0) {
                 close(listener_fd);
+                close(request_fifo_fd);
+                close(request_fifo_keepalive_fd);
+                std::signal(SIGINT, SIG_DFL);
+                std::signal(SIGTERM, SIG_DFL);
                 handle_client(std::move(client_socket));
                 _exit(0);
             }
@@ -198,8 +216,10 @@ void EchoServer::start() {
         break;
     }
 
-    close(fifo_fd);
-    unlink(fifo_path);
+    close(request_fifo_keepalive_fd);
+    close(request_fifo_fd);
+    unlink(kRequestFifoPath);
+    unlink(kResponseFifoPath);
     std::cout << "Server shutdown requested." << std::endl;
 }
 
@@ -274,7 +294,7 @@ void EchoServer::sync_pattern_stats() {
 
 void EchoServer::process_fifo_request(int fd) {
     auto write_response = [&](const std::string& response) {
-        int write_fd = open("/tmp/echo_server_fifo", O_WRONLY | O_NONBLOCK);
+        int write_fd = open(kResponseFifoPath, O_WRONLY | O_NONBLOCK);
         if (write_fd < 0) {
             return;
         }
@@ -332,6 +352,7 @@ void EchoServer::process_fifo_request(int fd) {
     for (size_t i = 0; i < patterns_loaded && i < kMaxPatterns; ++i) {
         response += std::string(stats->pattern_stats[i].name) + "=" + std::to_string(stats->pattern_stats[i].count.load()) + "\n";
     }
+    response += "END\n";
 
     write_response(response);
 }

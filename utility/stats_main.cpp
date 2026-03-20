@@ -4,9 +4,18 @@
 #include <string>
 
 int main(int argc, char* argv[]) {
-	const std::string fifo_path = argc >= 2 ? argv[1] : "/tmp/echo_server_fifo";
+	std::string request_fifo_path = "/tmp/echo_server_req_fifo";
+	std::string response_fifo_path = "/tmp/echo_server_resp_fifo";
 
-	StatsClient client(fifo_path);
+	if (argc == 3) {
+		request_fifo_path = argv[1];
+		response_fifo_path = argv[2];
+	} else if (argc != 1) {
+		std::cerr << "Usage: " << argv[0] << " [<request_fifo_path> <response_fifo_path>]" << std::endl;
+		return 1;
+	}
+
+	StatsClient client(request_fifo_path, response_fifo_path);
 	const std::vector<StatEntry> stats = client.fetch_stats();
 
 	if (stats.empty()) {

@@ -8,16 +8,16 @@
 int main(int argc, char* argv[]) {
     try {
         if (argc < 3) {
-            std::cerr << "Usage: " << argv[0] << " <port> <config_path>" << std::endl;
+            std::cerr << "Usage: " << argv[0] << " <config_path> <port>" << std::endl;
             return 1;
         }
 
-        const int port = std::stoi(argv[1]);
+        const std::string config_path = argv[1];
+        const int port = std::stoi(argv[2]);
         if (port <= 0 || port > 65535) {
             std::cerr << "Invalid port: " << port << std::endl;
             return 1;
         }
-        const std::string config_path = argv[2];
 
         configure_server_signals();
 
