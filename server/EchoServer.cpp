@@ -13,6 +13,7 @@
 #include <fcntl.h>
 #include <sys/stat.h>
 #include <algorithm>
+#include <vector>
 
 namespace {
 volatile sig_atomic_t g_running = 1;
@@ -112,6 +113,7 @@ void EchoServer::start() {
         throw std::runtime_error("Failed to open FIFO: " + std::string(std::strerror(errno)));
     }
 
+    std::vector<pid_t> child_pids;
 
 
     while (g_running) {
@@ -170,7 +172,30 @@ void EchoServer::start() {
                 handle_client(std::move(client_socket));
                 _exit(0);
             }
+
+            child_pids.push_back(pid);
         }
+    }
+
+    for (pid_t pid : child_pids) {
+        if (pid <= 0) {
+            continue;
+        }
+        kill(pid, SIGTERM);
+    }
+
+    while (true) {
+        const pid_t waited = waitpid(-1, nullptr, 0);
+        if (waited > 0) {
+            continue;
+        }
+        if (waited < 0 && errno == EINTR) {
+            continue;
+        }
+        if (waited < 0 && errno == ECHILD) {
+            break;
+        }
+        break;
     }
 
     close(fifo_fd);
@@ -248,21 +273,65 @@ void EchoServer::sync_pattern_stats() {
 }
 
 void EchoServer::process_fifo_request(int fd) {
-    char buff[16];
-    read(fd, buff, sizeof(buff) - 1);
+    auto write_response = [&](const std::string& response) {
+        int write_fd = open("/tmp/echo_server_fifo", O_WRONLY | O_NONBLOCK);
+        if (write_fd < 0) {
+            return;
+        }
+
+        size_t written_total = 0;
+        while (written_total < response.size()) {
+            const ssize_t written = write(write_fd, response.c_str() + written_total, response.size() - written_total);
+            if (written < 0) {
+                if (errno == EINTR) {
+                    continue;
+                }
+                break;
+            }
+            if (written == 0) {
+                break;
+            }
+            written_total += static_cast<size_t>(written);
+        }
+
+        close(write_fd);
+    };
+
+    char buff[128]{};
+    const ssize_t bytes_read = read(fd, buff, sizeof(buff) - 1);
+    if (bytes_read < 0) {
+        if (errno == EINTR || errno == EAGAIN || errno == EWOULDBLOCK) {
+            return;
+        }
+        write_response("ERROR read_failed\n");
+        return;
+    }
+
+    if (bytes_read == 0) {
+        return;
+    }
+
+    buff[bytes_read] = '\0';
+    std::string request(buff);
+    request.erase(std::remove(request.begin(), request.end(), '\r'), request.end());
+    request.erase(std::remove(request.begin(), request.end(), '\n'), request.end());
+
+    if (request != "GET_STATS") {
+        write_response("ERROR unknown_request\n");
+        return;
+    }
 
     auto* stats = stats_storage_.get_stats();
 
-    std::string response = "Files checked: " + std::to_string(stats->files_checked.load()) + "\n" +
-                           "Threats detected: " + std::to_string(stats->threats_detected.load()) + "\n" +
-                           "Patterns loaded: " + std::to_string(stats->patterns_loaded.load()) + "\n";
-    for (size_t i = 0; i < stats->patterns_loaded; ++i) {
-        response += std::string(stats->pattern_stats[i].name) + ": " + std::to_string(stats->pattern_stats[i].count.load()) + "\n";
+    std::string response = "OK\n";
+    response += "files_checked=" + std::to_string(stats->files_checked.load()) + "\n";
+    response += "threats_detected=" + std::to_string(stats->threats_detected.load()) + "\n";
+    response += "patterns_loaded=" + std::to_string(stats->patterns_loaded.load()) + "\n";
+
+    const size_t patterns_loaded = static_cast<size_t>(stats->patterns_loaded.load());
+    for (size_t i = 0; i < patterns_loaded && i < kMaxPatterns; ++i) {
+        response += std::string(stats->pattern_stats[i].name) + "=" + std::to_string(stats->pattern_stats[i].count.load()) + "\n";
     }
-    
-    int write_fd = open("/tmp/echo_server_fifo", O_WRONLY | O_NONBLOCK);
-    if (write_fd >= 0) {
-        write(write_fd, response.c_str(), response.size());
-        close(write_fd);
-    }
+
+    write_response(response);
 }

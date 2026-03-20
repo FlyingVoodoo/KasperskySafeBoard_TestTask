@@ -19,3 +19,15 @@ add_executable(server_app
 target_include_directories(server_app PRIVATE ${CMAKE_SOURCE_DIR}/include ${CMAKE_SOURCE_DIR}/server)
 target_link_libraries(server_app PRIVATE shared)
 
+add_executable(client_app
+    client/client_main.cpp
+    client/ScannerClient.cpp
+)
+target_include_directories(client_app PRIVATE ${CMAKE_SOURCE_DIR}/client)
+
+add_executable(stats_utility
+    utility/stats_main.cpp
+    utility/StatsClient.cpp
+)
+target_include_directories(stats_utility PRIVATE ${CMAKE_SOURCE_DIR}/utility)
+
