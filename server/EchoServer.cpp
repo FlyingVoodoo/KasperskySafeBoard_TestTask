@@ -21,6 +21,65 @@ volatile sig_atomic_t g_running = 1;
 constexpr const char* kRequestFifoPath = "/tmp/echo_server_req_fifo";
 constexpr const char* kResponseFifoPath = "/tmp/echo_server_resp_fifo";
 
+class FileDescriptor {
+public:
+    explicit FileDescriptor(int fd = -1) : fd_(fd) {
+    }
+
+    FileDescriptor(const FileDescriptor&) = delete;
+    FileDescriptor& operator=(const FileDescriptor&) = delete;
+
+    FileDescriptor(FileDescriptor&& other) noexcept : fd_(other.fd_) {
+        other.fd_ = -1;
+    }
+
+    FileDescriptor& operator=(FileDescriptor&& other) noexcept {
+        if (this != &other) {
+            reset();
+            fd_ = other.fd_;
+            other.fd_ = -1;
+        }
+        return *this;
+    }
+
+    ~FileDescriptor() {
+        reset();
+    }
+
+    int get() const {
+        return fd_;
+    }
+
+    bool valid() const {
+        return fd_ >= 0;
+    }
+
+    void reset(int new_fd = -1) {
+        if (fd_ >= 0) {
+            close(fd_);
+        }
+        fd_ = new_fd;
+    }
+
+private:
+    int fd_;
+};
+
+std::string build_stats_response(const SharedStats* stats) {
+    std::string response = "OK\n";
+    response += "files_checked=" + std::to_string(stats->files_checked.load()) + "\n";
+    response += "threats_detected=" + std::to_string(stats->threats_detected.load()) + "\n";
+    response += "patterns_loaded=" + std::to_string(stats->patterns_loaded.load()) + "\n";
+
+    const size_t patterns_loaded = static_cast<size_t>(stats->patterns_loaded.load());
+    for (size_t i = 0; i < patterns_loaded && i < kMaxPatterns; ++i) {
+        response += std::string(stats->pattern_stats[i].name) + "=" + std::to_string(stats->pattern_stats[i].count.load()) + "\n";
+    }
+
+    response += "END\n";
+    return response;
+}
+
 void handle_signal(int signal) {
     if (signal == SIGINT || signal == SIGTERM) {
         g_running = 0;
@@ -116,14 +175,13 @@ void EchoServer::start() {
         throw std::runtime_error("Failed to create response FIFO: " + std::string(std::strerror(errno)));
     }
 
-    int request_fifo_fd = open(kRequestFifoPath, O_RDONLY | O_NONBLOCK);
-    if (request_fifo_fd < 0) {
+    FileDescriptor request_fifo_fd(open(kRequestFifoPath, O_RDONLY | O_NONBLOCK));
+    if (!request_fifo_fd.valid()) {
         throw std::runtime_error("Failed to open request FIFO: " + std::string(std::strerror(errno)));
     }
 
-    int request_fifo_keepalive_fd = open(kRequestFifoPath, O_WRONLY | O_NONBLOCK);
-    if (request_fifo_keepalive_fd < 0) {
-        close(request_fifo_fd);
+    FileDescriptor request_fifo_keepalive_fd(open(kRequestFifoPath, O_WRONLY | O_NONBLOCK));
+    if (!request_fifo_keepalive_fd.valid()) {
         throw std::runtime_error("Failed to open request FIFO keepalive: " + std::string(std::strerror(errno)));
     }
 
@@ -137,9 +195,9 @@ void EchoServer::start() {
         int listener_fd = server_socket_.get_fd();
         FD_SET(listener_fd, &read_fds);
 
-        FD_SET(request_fifo_fd, &read_fds);
+        FD_SET(request_fifo_fd.get(), &read_fds);
 
-        int max_fd = std::max(listener_fd, request_fifo_fd);
+        int max_fd = std::max(listener_fd, request_fifo_fd.get());
 
 
         timeval timeout{1, 0};
@@ -157,8 +215,8 @@ void EchoServer::start() {
             continue;
 
         
-            if (FD_ISSET(request_fifo_fd, &read_fds))
-                process_fifo_request(request_fifo_fd);
+            if (FD_ISSET(request_fifo_fd.get(), &read_fds))
+                process_fifo_request(request_fifo_fd.get());
 
         if (FD_ISSET(listener_fd, &read_fds)) {
             sockaddr_in client_address{};
@@ -183,8 +241,8 @@ void EchoServer::start() {
 
             if (pid == 0) {
                 close(listener_fd);
-                close(request_fifo_fd);
-                close(request_fifo_keepalive_fd);
+                request_fifo_fd.reset();
+                request_fifo_keepalive_fd.reset();
                 std::signal(SIGINT, SIG_DFL);
                 std::signal(SIGTERM, SIG_DFL);
                 handle_client(std::move(client_socket));
@@ -216,8 +274,8 @@ void EchoServer::start() {
         break;
     }
 
-    close(request_fifo_keepalive_fd);
-    close(request_fifo_fd);
+    request_fifo_keepalive_fd.reset();
+    request_fifo_fd.reset();
     unlink(kRequestFifoPath);
     unlink(kResponseFifoPath);
     std::cout << "Server shutdown requested." << std::endl;
@@ -294,14 +352,14 @@ void EchoServer::sync_pattern_stats() {
 
 void EchoServer::process_fifo_request(int fd) {
     auto write_response = [&](const std::string& response) {
-        int write_fd = open(kResponseFifoPath, O_WRONLY | O_NONBLOCK);
-        if (write_fd < 0) {
+        FileDescriptor write_fd(open(kResponseFifoPath, O_WRONLY | O_NONBLOCK));
+        if (!write_fd.valid()) {
             return;
         }
 
         size_t written_total = 0;
         while (written_total < response.size()) {
-            const ssize_t written = write(write_fd, response.c_str() + written_total, response.size() - written_total);
+            const ssize_t written = write(write_fd.get(), response.c_str() + written_total, response.size() - written_total);
             if (written < 0) {
                 if (errno == EINTR) {
                     continue;
@@ -313,8 +371,6 @@ void EchoServer::process_fifo_request(int fd) {
             }
             written_total += static_cast<size_t>(written);
         }
-
-        close(write_fd);
     };
 
     char buff[128]{};
@@ -341,18 +397,5 @@ void EchoServer::process_fifo_request(int fd) {
         return;
     }
 
-    auto* stats = stats_storage_.get_stats();
-
-    std::string response = "OK\n";
-    response += "files_checked=" + std::to_string(stats->files_checked.load()) + "\n";
-    response += "threats_detected=" + std::to_string(stats->threats_detected.load()) + "\n";
-    response += "patterns_loaded=" + std::to_string(stats->patterns_loaded.load()) + "\n";
-
-    const size_t patterns_loaded = static_cast<size_t>(stats->patterns_loaded.load());
-    for (size_t i = 0; i < patterns_loaded && i < kMaxPatterns; ++i) {
-        response += std::string(stats->pattern_stats[i].name) + "=" + std::to_string(stats->pattern_stats[i].count.load()) + "\n";
-    }
-    response += "END\n";
-
-    write_response(response);
+    write_response(build_stats_response(stats_storage_.get_stats()));
 }

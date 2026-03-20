@@ -1,6 +1,6 @@
 #pragma once
 
-#include <cstddef>
+#include <string>
 
 #include "../include/SharedMemory.hpp"
 #include "Scanner.hpp"
