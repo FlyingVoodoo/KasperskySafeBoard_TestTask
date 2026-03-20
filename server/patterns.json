@@ -1,0 +1,8 @@
+{
+  "patterns": [
+    "malware",
+    "trojan",
+    "virus",
+    "ransomware"
+  ]
+}

@@ -3,11 +3,12 @@
 #include <cstdlib>
 #include <exception>
 #include <iostream>
+#include <string>
 
 int main(int argc, char* argv[]) {
     try {
-        if (argc < 2) {
-            std::cerr << "Usage: " << argv[0] << " <port>" << std::endl;
+        if (argc < 3) {
+            std::cerr << "Usage: " << argv[0] << " <port> <config_path>" << std::endl;
             return 1;
         }
 
@@ -16,10 +17,11 @@ int main(int argc, char* argv[]) {
             std::cerr << "Invalid port: " << port << std::endl;
             return 1;
         }
+        const std::string config_path = argv[2];
 
         configure_server_signals();
 
-        EchoServer server(port);
+        EchoServer server(port, config_path);
         server.start();
     } catch (const std::exception& e) {
         std::cerr << "Error: " << e.what() << std::endl;

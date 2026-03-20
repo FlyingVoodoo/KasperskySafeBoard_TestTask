@@ -3,6 +3,7 @@
 #include <cstddef>
 
 #include "../include/SharedMemory.hpp"
+#include "Scanner.hpp"
 
 class Socket {
 public:
@@ -21,7 +22,7 @@ private:
 
 class EchoServer {
 public:
-    explicit EchoServer(int port);
+    explicit EchoServer(int port, const std::string& config_path = "patterns.json");
 
     EchoServer(const EchoServer&) = delete;
     EchoServer& operator=(const EchoServer&) = delete;
@@ -31,10 +32,14 @@ public:
 private:
     bool send_all(int socket_fd, const char* data, size_t total_bytes);
     void handle_client(Socket client_socket);
+    void sync_pattern_stats();
+    void process_fifo_request(int fd);
 
     Socket server_socket_;
     int port_;
     SharedMemory stats_storage_;
+    std::string config_path_;
+    Scanner scanner_;
 };
 
 void configure_server_signals();

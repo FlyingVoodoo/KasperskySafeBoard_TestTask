@@ -13,7 +13,6 @@ Makefile
 *.swp
 *.swo
 *~
-
 .vscode/
 .cache/
 compile_commands.json

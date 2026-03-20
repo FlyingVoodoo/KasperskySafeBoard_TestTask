@@ -10,6 +10,9 @@
 #include <netinet/in.h>
 #include <sys/wait.h>
 #include <unistd.h>
+#include <fcntl.h>
+#include <sys/stat.h>
+#include <algorithm>
 
 namespace {
 volatile sig_atomic_t g_running = 1;
@@ -73,8 +76,8 @@ int Socket::get_fd() const {
     return fd_;
 }
 
-EchoServer::EchoServer(int port)
-    : server_socket_(socket(AF_INET, SOCK_STREAM, 0)), port_(port), stats_storage_() {
+EchoServer::EchoServer(int port, const std::string& config_path)
+    : server_socket_(socket(AF_INET, SOCK_STREAM, 0)), port_(port), config_path_(config_path), stats_storage_(), scanner_(config_path) {
 
     int opt = 1;
     if (setsockopt(server_socket_.get_fd(), SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt)) < 0) {
@@ -93,22 +96,39 @@ EchoServer::EchoServer(int port)
     if (listen(server_socket_.get_fd(), SOMAXCONN) < 0) {
         throw std::runtime_error("Listen failed");
     }
+
+    sync_pattern_stats();
 }
 
 void EchoServer::start() {
     std::cout << "Server started on port " << port_ << "..." << std::endl;
     std::cout << "Press Ctrl+C to stop." << std::endl;
 
+    const char* fifo_path = "/tmp/echo_server_fifo";
+    mkfifo(fifo_path, 0666);
+
+    int fifo_fd = open(fifo_path, O_RDWR | O_NONBLOCK);
+    if (fifo_fd < 0) {
+        throw std::runtime_error("Failed to open FIFO: " + std::string(std::strerror(errno)));
+    }
+
+
+
     while (g_running) {
         fd_set read_fds;
         FD_ZERO(&read_fds);
-        FD_SET(server_socket_.get_fd(), &read_fds);
 
-        timeval timeout{};
-        timeout.tv_sec = 1;
-        timeout.tv_usec = 0;
+        int listener_fd = server_socket_.get_fd();
+        FD_SET(listener_fd, &read_fds);
 
-        int ready = select(server_socket_.get_fd() + 1, &read_fds, nullptr, nullptr, &timeout);
+        FD_SET(fifo_fd, &read_fds);
+
+        int max_fd = std::max(listener_fd, fifo_fd);
+
+
+        timeval timeout{1, 0};
+
+        int ready = select(max_fd + 1, &read_fds, nullptr, nullptr, &timeout);
         if (ready < 0) {
             if (errno == EINTR) {
                 continue;
@@ -117,48 +137,44 @@ void EchoServer::start() {
             continue;
         }
 
-        if (ready == 0) {
+        if (ready == 0)
             continue;
-        }
 
-        sockaddr_in client_address{};
-        socklen_t client_len = sizeof(client_address);
-        int client_fd = accept(server_socket_.get_fd(), reinterpret_cast<sockaddr*>(&client_address), &client_len);
+        
+         if (FD_ISSET(fifo_fd, &read_fds))
+            process_fifo_request(fifo_fd);
 
-        if (client_fd < 0) {
-            if (errno == EINTR) {
+        if (FD_ISSET(listener_fd, &read_fds)) {
+            sockaddr_in client_address{};
+            socklen_t client_len = sizeof(client_address);
+            int client_fd = accept(server_socket_.get_fd(), reinterpret_cast<sockaddr*>(&client_address), &client_len);
+
+            if (client_fd < 0) {
+                if (errno == EINTR) {
+                    continue;
+                }
+                std::cerr << "Accept failed: " << std::strerror(errno) << std::endl;
                 continue;
             }
-            std::cerr << "Accept failed: " << std::strerror(errno) << std::endl;
-            continue;
-        }
 
-        std::cout << "Client connected!" << std::endl;
-        Socket client_socket(client_fd);
-        pid_t pid = fork();
-        if (pid < 0) {
-            std::cerr << "Fork failed: " << std::strerror(errno) << std::endl;
-            continue;
-        }
+            std::cout << "Client connected!" << std::endl;
+            Socket client_socket(client_fd);
+            pid_t pid = fork();
+            if (pid < 0) {
+                std::cerr << "Fork failed: " << std::strerror(errno) << std::endl;
+                continue;
+            }
 
-        if (pid == 0) {
-            close(server_socket_.get_fd());
-            handle_client(std::move(client_socket));
-            _exit(0);
+            if (pid == 0) {
+                close(listener_fd);
+                handle_client(std::move(client_socket));
+                _exit(0);
+            }
         }
     }
 
-    while (true) {
-        pid_t waited = waitpid(-1, nullptr, 0);
-        if (waited > 0) {
-            continue;
-        }
-        if (waited < 0 && errno == EINTR) {
-            continue;
-        }
-        break;
-    }
-
+    close(fifo_fd);
+    unlink(fifo_path);
     std::cout << "Server shutdown requested." << std::endl;
 }
 
@@ -181,26 +197,72 @@ bool EchoServer::send_all(int socket_fd, const char* data, size_t total_bytes) {
 }
 
 void EchoServer::handle_client(Socket client_socket) {
-    char buffer[1024];
+    std::string file_content;
+    char buffer[4096];
+
     while (true) {
         ssize_t bytes_read = recv(client_socket.get_fd(), buffer, sizeof(buffer), 0);
-        if (bytes_read < 0) {
-            if (errno == EINTR) {
+        if (bytes_read <= 0) {
+            if (bytes_read < 0 && errno == EINTR) {
                 continue;
             }
-            std::cerr << "Receive failed: " << std::strerror(errno) << std::endl;
             break;
         }
-
-        if (bytes_read == 0) {
-            break;
-        }
-
-        if (!send_all(client_socket.get_fd(), buffer, static_cast<size_t>(bytes_read))) {
-            std::cerr << "Send failed: " << std::strerror(errno) << std::endl;
-            break;
-        }
+        file_content.append(buffer, static_cast<size_t>(bytes_read));
     }
+    auto stats = stats_storage_.get_stats();
+    stats->files_checked.fetch_add(1, std::memory_order_relaxed);
 
-    std::cout << "Client disconnected." << std::endl;
+    ScanResult result = scanner_.scan(file_content);
+
+    std::string response;
+    if (result.infected) {
+        stats->threats_detected.fetch_add(1, std::memory_order_relaxed);
+        
+        response = "Infected:";
+        for (size_t index : result.matched_indices) {
+            if (index < kMaxPatterns) {
+                stats->pattern_stats[index].count.fetch_add(1, std::memory_order_relaxed);
+            }
+            response += " " + scanner_.get_patterns()[index];
+        }
+    } else {
+        response = "Clean";
+    }
+    response += "\n";
+
+    send_all(client_socket.get_fd(), response.c_str(), response.size());
+}
+
+void EchoServer::sync_pattern_stats() {
+    auto* stats = stats_storage_.get_stats();
+    const auto& loaded_patterns = scanner_.get_patterns();
+
+    stats->patterns_loaded = loaded_patterns.size();
+
+    for (size_t i = 0; i < loaded_patterns.size() && i < kMaxPatterns; ++i) {
+        std::strncpy(stats->pattern_stats[i].name, loaded_patterns[i].c_str(), kMaxPatternNameLength - 1);
+        stats->pattern_stats[i].name[kMaxPatternNameLength - 1] = '\0';
+        stats->pattern_stats[i].count = 0;
+    }
+}
+
+void EchoServer::process_fifo_request(int fd) {
+    char buff[16];
+    read(fd, buff, sizeof(buff) - 1);
+
+    auto* stats = stats_storage_.get_stats();
+
+    std::string response = "Files checked: " + std::to_string(stats->files_checked.load()) + "\n" +
+                           "Threats detected: " + std::to_string(stats->threats_detected.load()) + "\n" +
+                           "Patterns loaded: " + std::to_string(stats->patterns_loaded.load()) + "\n";
+    for (size_t i = 0; i < stats->patterns_loaded; ++i) {
+        response += std::string(stats->pattern_stats[i].name) + ": " + std::to_string(stats->pattern_stats[i].count.load()) + "\n";
+    }
+    
+    int write_fd = open("/tmp/echo_server_fifo", O_WRONLY | O_NONBLOCK);
+    if (write_fd >= 0) {
+        write(write_fd, response.c_str(), response.size());
+        close(write_fd);
+    }
 }
