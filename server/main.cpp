@@ -1,4 +1,4 @@
-#include "EchoServer.hpp"
+#include "Server.hpp"
 
 #include <cstdlib>
 #include <exception>
@@ -21,7 +21,7 @@ int main(int argc, char* argv[]) {
 
         configure_server_signals();
 
-        EchoServer server(port, config_path);
+        Server server(port, config_path);
         server.start();
     } catch (const std::exception& e) {
         std::cerr << "Error: " << e.what() << std::endl;

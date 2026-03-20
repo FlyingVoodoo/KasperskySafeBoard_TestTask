@@ -20,12 +20,12 @@ private:
     int fd_;
 };
 
-class EchoServer {
+class Server {
 public:
-    explicit EchoServer(int port, const std::string& config_path = "patterns.json");
+    explicit Server(int port, const std::string& config_path = "patterns.json");
 
-    EchoServer(const EchoServer&) = delete;
-    EchoServer& operator=(const EchoServer&) = delete;
+    Server(const Server&) = delete;
+    Server& operator=(const Server&) = delete;
 
     void start();
 

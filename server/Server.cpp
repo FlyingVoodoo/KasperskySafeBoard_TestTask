@@ -1,4 +1,4 @@
-#include "EchoServer.hpp"
+#include "Server.hpp"
 
 #include <cerrno>
 #include <csignal>
@@ -18,8 +18,8 @@
 namespace {
 volatile sig_atomic_t g_running = 1;
 
-constexpr const char* kRequestFifoPath = "/tmp/echo_server_req_fifo";
-constexpr const char* kResponseFifoPath = "/tmp/echo_server_resp_fifo";
+constexpr const char* kRequestFifoPath = "/tmp/server_req_fifo";
+constexpr const char* kResponseFifoPath = "/tmp/server_resp_fifo";
 
 class FileDescriptor {
 public:
@@ -139,7 +139,7 @@ int Socket::get_fd() const {
     return fd_;
 }
 
-EchoServer::EchoServer(int port, const std::string& config_path)
+Server::Server(int port, const std::string& config_path)
     : server_socket_(socket(AF_INET, SOCK_STREAM, 0)), port_(port), config_path_(config_path), stats_storage_(), scanner_(config_path) {
 
     int opt = 1;
@@ -163,7 +163,7 @@ EchoServer::EchoServer(int port, const std::string& config_path)
     sync_pattern_stats();
 }
 
-void EchoServer::start() {
+void Server::start() {
     std::cout << "Server started on port " << port_ << "..." << std::endl;
     std::cout << "Press Ctrl+C to stop." << std::endl;
 
@@ -281,7 +281,7 @@ void EchoServer::start() {
     std::cout << "Server shutdown requested." << std::endl;
 }
 
-bool EchoServer::send_all(int socket_fd, const char* data, size_t total_bytes) {
+bool Server::send_all(int socket_fd, const char* data, size_t total_bytes) {
     size_t sent_total = 0;
     while (sent_total < total_bytes) {
         ssize_t sent = send(socket_fd, data + sent_total, total_bytes - sent_total, MSG_NOSIGNAL);
@@ -299,7 +299,7 @@ bool EchoServer::send_all(int socket_fd, const char* data, size_t total_bytes) {
     return true;
 }
 
-void EchoServer::handle_client(Socket client_socket) {
+void Server::handle_client(Socket client_socket) {
     std::string file_content;
     char buffer[4096];
 
@@ -337,7 +337,7 @@ void EchoServer::handle_client(Socket client_socket) {
     send_all(client_socket.get_fd(), response.c_str(), response.size());
 }
 
-void EchoServer::sync_pattern_stats() {
+void Server::sync_pattern_stats() {
     auto* stats = stats_storage_.get_stats();
     const auto& loaded_patterns = scanner_.get_patterns();
 
@@ -350,7 +350,7 @@ void EchoServer::sync_pattern_stats() {
     }
 }
 
-void EchoServer::process_fifo_request(int fd) {
+void Server::process_fifo_request(int fd) {
     auto write_response = [&](const std::string& response) {
         FileDescriptor write_fd(open(kResponseFifoPath, O_WRONLY | O_NONBLOCK));
         if (!write_fd.valid()) {

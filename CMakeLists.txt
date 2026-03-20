@@ -27,7 +27,7 @@ target_link_libraries(shared PUBLIC nlohmann_json::nlohmann_json)
 
 add_executable(server_app
     server/main.cpp
-    server/EchoServer.cpp
+    server/Server.cpp
 )
 target_include_directories(server_app PRIVATE ${CMAKE_SOURCE_DIR}/include ${CMAKE_SOURCE_DIR}/server)
 target_link_libraries(server_app PRIVATE shared)

@@ -4,8 +4,8 @@
 #include <string>
 
 int main(int argc, char* argv[]) {
-	std::string request_fifo_path = "/tmp/echo_server_req_fifo";
-	std::string response_fifo_path = "/tmp/echo_server_resp_fifo";
+	std::string request_fifo_path = "/tmp/server_req_fifo";
+	std::string response_fifo_path = "/tmp/server_resp_fifo";
 
 	if (argc == 3) {
 		request_fifo_path = argv[1];
