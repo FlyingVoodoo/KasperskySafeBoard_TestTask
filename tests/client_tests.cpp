@@ -15,7 +15,7 @@
 #include <string>
 #include <thread>
 
-#include "../client/ScannerClient.hpp"
+#include "ScannerClient.hpp"
 
 namespace {
 int create_listener(uint16_t& port) {

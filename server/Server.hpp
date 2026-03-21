@@ -2,7 +2,7 @@
 
 #include <string>
 
-#include "../include/SharedMemory.hpp"
+#include "SharedMemory.hpp"
 #include "Scanner.hpp"
 
 class Socket {

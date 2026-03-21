@@ -6,7 +6,7 @@
 #include <fstream>
 #include <string>
 
-#include "../server/Scanner.hpp"
+#include "Scanner.hpp"
 
 namespace {
 std::filesystem::path write_temp_config(const std::string& body, const std::string& suffix) {

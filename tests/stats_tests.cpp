@@ -10,7 +10,7 @@
 #include <thread>
 #include <vector>
 
-#include "../utility/StatsClient.hpp"
+#include "StatsClient.hpp"
 
 namespace {
 std::string fifo_path(const std::string& prefix) {
