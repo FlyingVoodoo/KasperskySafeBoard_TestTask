@@ -6,6 +6,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
 include(FetchContent)
+include(CTest)
 
 find_package(nlohmann_json QUIET)
 if(NOT nlohmann_json_FOUND)
@@ -43,4 +44,38 @@ add_executable(stats_utility
     utility/StatsClient.cpp
 )
 target_include_directories(stats_utility PRIVATE ${CMAKE_SOURCE_DIR}/utility)
+
+if(BUILD_TESTING)
+    FetchContent_Declare(
+        googletest
+        URL https://github.com/google/googletest/archive/refs/tags/v1.14.0.zip
+    )
+    FetchContent_MakeAvailable(googletest)
+
+    find_package(Threads REQUIRED)
+
+    add_executable(client_tests
+        tests/client_tests.cpp
+        client/ScannerClient.cpp
+    )
+    target_include_directories(client_tests PRIVATE ${CMAKE_SOURCE_DIR}/client)
+    target_link_libraries(client_tests PRIVATE GTest::gtest_main Threads::Threads)
+    add_test(NAME client_tests COMMAND client_tests)
+
+    add_executable(server_tests
+        tests/server_tests.cpp
+        server/Scanner.cpp
+    )
+    target_include_directories(server_tests PRIVATE ${CMAKE_SOURCE_DIR}/server ${CMAKE_SOURCE_DIR}/include)
+    target_link_libraries(server_tests PRIVATE GTest::gtest_main nlohmann_json::nlohmann_json Threads::Threads)
+    add_test(NAME server_tests COMMAND server_tests)
+
+    add_executable(stats_tests
+        tests/stats_tests.cpp
+        utility/StatsClient.cpp
+    )
+    target_include_directories(stats_tests PRIVATE ${CMAKE_SOURCE_DIR}/utility)
+    target_link_libraries(stats_tests PRIVATE GTest::gtest_main Threads::Threads)
+    add_test(NAME stats_tests COMMAND stats_tests)
+endif()
 
